@@ -35,13 +35,61 @@
     '*,*::before,*::after{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;' +
     'transition-duration:0s!important;transition-delay:0s!important;scroll-behavior:auto!important}' +
     '[class*="blur"]{filter:none!important}' +
-    '*:focus{outline:none!important}';
+    '*:focus{outline:none!important}' +
+    // Focused item grows slightly, TV-style.
+    '.cj-tv-focus{transform:scale(1.06)!important;z-index:40!important;position:relative}';
   (document.head || document.documentElement).appendChild(st);
+
+  // ---- small on-screen note ----
+  var toastBox = document.createElement('div');
+  toastBox.style.cssText = 'position:fixed;right:3%;top:4%;z-index:2147483647;pointer-events:none;' +
+    'padding:10px 20px;border-radius:12px;background:rgba(0,0,0,.8);color:#fff;' +
+    'font:600 20px/1.2 sans-serif;display:none;';
+  var toastTimer = null;
+  function toast(text) {
+    if (!toastBox.parentNode && document.body) document.body.appendChild(toastBox);
+    toastBox.textContent = text;
+    toastBox.style.display = 'block';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastBox.style.display = 'none'; }, 1800);
+  }
+
+  // ---- pop-up / ad-link blocking: never leave cinejoy.pk ----
+  function sameSite(url) {
+    try {
+      var h = new URL(url, location.href).hostname;
+      return h === location.hostname || /(^|\.)cinejoy\.pk$/.test(h);
+    } catch (e) { return false; }
+  }
+  var fakeWindow = {
+    closed: true, opener: null, location: { href: '' },
+    close: function () {}, focus: function () {}, blur: function () {}, postMessage: function () {},
+    document: { write: function () {}, writeln: function () {}, open: function () {}, close: function () {} }
+  };
+  window.open = function (url) {
+    if (url && sameSite(url)) { location.href = new URL(url, location.href).href; return window; }
+    toast('Blocked a pop-up');
+    return fakeWindow;
+  };
+  // Links to other sites (ads) do nothing; same-site "new tab" links open in place.
+  window.addEventListener('click', function (e) {
+    var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a) return;
+    var href = a.getAttribute('href');
+    if (!href || href.charAt(0) === '#') return;
+    if (!sameSite(a.href)) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      toast('Blocked a link to another site');
+    } else if (a.target && a.target !== '_self') {
+      a.target = '_self';
+    }
+  }, true);
 
   // ---- focus ring (an overlay, so it is never clipped by overflow:hidden) ----
   var ring = document.createElement('div');
   ring.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483647;display:none;' +
-    'border:4px solid #95ff50;border-radius:10px;box-shadow:0 0 0 3px rgba(0,0,0,.65);';
+    'border:5px solid #95ff50;border-radius:10px;' +
+    'box-shadow:0 0 0 3px rgba(0,0,0,.7),0 0 18px rgba(149,255,80,.45);';
 
   var ringQueued = false;
   function updateRing() {
@@ -50,7 +98,7 @@
     if (!current || !document.documentElement.contains(current) || playerVideo()) { ring.style.display = 'none'; return; }
     var r = current.getBoundingClientRect();
     ring.style.display = 'block';
-    ring.style.transform = 'translate(' + (r.left - 6) + 'px,' + (r.top - 6) + 'px)';
+    ring.style.transform = 'translate(' + (r.left - 7) + 'px,' + (r.top - 7) + 'px)';
     ring.style.left = '0'; ring.style.top = '0';
     ring.style.width = (r.width + 4) + 'px';
     ring.style.height = (r.height + 4) + 'px';
@@ -87,18 +135,23 @@
     return true;
   }
 
-  function inScroller(el) {
+  // The horizontally scrolling row an element sits in (a movie row), if any.
+  var rowCache = typeof WeakMap === 'function' ? new WeakMap() : null;
+  function rowOf(el) {
+    if (rowCache && rowCache.has(el)) return rowCache.get(el);
+    var row = null;
     for (var p = el.parentElement, i = 0; p && p !== document.body && i < 6; p = p.parentElement, i++) {
       var o = getComputedStyle(p).overflowX;
-      if (o === 'auto' || o === 'scroll') return true;
+      if (o === 'auto' || o === 'scroll') { row = p; break; }
     }
-    return false;
+    if (rowCache) rowCache.set(el, row);
+    return row;
   }
 
   function visibleEnough(el, r) {
     var s = getComputedStyle(el);
     if (s.visibility === 'hidden' || s.opacity === '0') return false;
-    if ((r.right <= 0 || r.left >= window.innerWidth) && !inScroller(el)) return false;
+    if ((r.right <= 0 || r.left >= window.innerWidth) && !rowOf(el)) return false;
     return true;
   }
 
@@ -157,18 +210,67 @@
 
   function isField(el) { return el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName); }
 
-  function focusEl(el) {
+  // ---- TV-style scrolling: the focused row sits at a steady height, and the
+  //      row slides so the focused card keeps a margin from the screen edge ----
+  var scrollAnim = 0;
+  function scrollToFocus(el, animate) {
+    var r = el.getBoundingClientRect();
+    var row = rowOf(el), dx = 0, dy = 0;
+
+    if (row) {
+      var cr = row.getBoundingClientRect();
+      var pad = Math.min(cr.width * 0.08, 140);
+      if (r.left < cr.left + pad) dx = r.left - (cr.left + pad);
+      else if (r.right > cr.right - pad) dx = r.right - (cr.right - pad);
+    } else if (r.left < 0 || r.right > window.innerWidth) {
+      try { el.scrollIntoView({ block: 'nearest', inline: 'center' }); } catch (e) {}
+      r = el.getBoundingClientRect();
+    }
+
+    // Tall things (hero banner) go near the top; rows sit about a quarter down.
+    var vh = window.innerHeight;
+    var target = r.height > vh * 0.5 ? vh * 0.06 : vh * 0.26;
+    dy = r.top - target;
+    var maxY = document.documentElement.scrollHeight - vh;
+    var sy = window.pageYOffset;
+    dy = Math.max(-sy, Math.min(maxY - sy, dy));
+
+    var sx = row ? row.scrollLeft : 0;
+    var token = ++scrollAnim;
+    if (!animate || (Math.abs(dx) < 2 && Math.abs(dy) < 2)) {
+      if (row) row.scrollLeft = sx + dx;
+      window.scrollTo(window.pageXOffset, sy + dy);
+      return;
+    }
+    var start = Date.now(), dur = 160;
+    (function step() {
+      if (token !== scrollAnim) return; // a newer key press took over
+      var k = Math.min(1, (Date.now() - start) / dur), e = 1 - Math.pow(1 - k, 3);
+      if (row) row.scrollLeft = sx + dx * e;
+      window.scrollTo(window.pageXOffset, sy + dy * e);
+      if (k < 1) window.requestAnimationFrame(step);
+    })();
+  }
+
+  // Remembers the last card focused in each row, so coming back to a row
+  // lands where you left off.
+  var rowMemory = typeof WeakMap === 'function' ? new WeakMap() : null;
+
+  function focusEl(el, animate) {
     if (!el) return;
     if (isField(document.activeElement)) document.activeElement.blur();
+    if (current && current.classList) current.classList.remove('cj-tv-focus');
     current = el;
     // Don't focus text fields until OK is pressed, so the TV keyboard doesn't pop up.
     if (!isField(el)) { try { el.focus({ preventScroll: true }); } catch (e) {} }
-    var r = el.getBoundingClientRect();
-    var margin = window.innerHeight * 0.15;
-    if (!isFixed(el) && (r.top < margin || r.bottom > window.innerHeight - margin * 1.5 ||
-        r.left < 0 || r.right > window.innerWidth)) {
-      try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) { el.scrollIntoView(false); }
+    var row = rowOf(el);
+    if (row) {
+      el.classList.add('cj-tv-focus');
+      if (rowMemory) rowMemory.set(row, el);
     }
+    var radius = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 6;
+    ring.style.borderRadius = Math.min(radius + 5, 40) + 'px';
+    if (!isFixed(el)) scrollToFocus(el, animate);
     updateRing();
   }
 
@@ -178,12 +280,20 @@
     return r.width >= 4 && r.height >= 4;
   }
 
-  function move(dir) {
-    if (!valid(current)) { focusEl(firstOnScreen(false) || firstOnScreen(true)); return; }
+  function move(dir, animate) {
+    if (!valid(current)) { focusEl(firstOnScreen(false) || firstOnScreen(true), false); return; }
     // Left/right inside the menu bar stay in it; otherwise prefer page content.
     var stayInMenu = isFixed(current) && (dir === 'left' || dir === 'right');
     var next = pick(scored(dir), stayInMenu);
-    if (next) focusEl(next);
+    // Moving up/down into another row: return to the card last used there.
+    if (next && (dir === 'up' || dir === 'down') && rowMemory) {
+      var row = rowOf(next);
+      if (row && row !== rowOf(current)) {
+        var mem = rowMemory.get(row);
+        if (mem && mem !== next && valid(mem) && row.contains(mem)) next = mem;
+      }
+    }
+    if (next) focusEl(next, animate);
     else if (dir === 'down' || dir === 'up') window.scrollBy(0, (dir === 'down' ? 1 : -1) * window.innerHeight * 0.6);
   }
 
@@ -281,7 +391,7 @@
       if (e.repeat && now - lastMove < 120) return;
       lastMove = now;
       if (typing) active.blur();
-      move(DIRS[k]);
+      move(DIRS[k], !e.repeat); // glide on single presses, jump while a key is held
       return;
     } else if (k === K.ENTER) {
       if (typing || (active && active.tagName === 'SELECT')) return; // let the field handle it

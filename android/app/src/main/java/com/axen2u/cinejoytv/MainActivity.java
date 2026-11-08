@@ -6,6 +6,8 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Message;
+import android.widget.Toast;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -57,7 +59,8 @@ public class MainActivity extends Activity {
         s.setDomStorageEnabled(true);
         s.setDatabaseEnabled(true);
         s.setMediaPlaybackRequiresUserGesture(false);
-        s.setSupportMultipleWindows(false);       // pop-up ads can't open new windows
+        // New windows go through onCreateWindow, which drops anything off-site.
+        s.setSupportMultipleWindows(true);
         s.setJavaScriptCanOpenWindowsAutomatically(false);
         s.setLoadWithOverviewMode(true);
         s.setUseWideViewPort(true);
@@ -78,13 +81,13 @@ public class MainActivity extends Activity {
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
             if (!request.isForMainFrame()) return false; // players inside iframes load normally
-            return !allowed(request.getUrl());
+            return blockIfOffsite(request.getUrl());
         }
 
         @SuppressWarnings("deprecation")
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, String url) {
-            return !allowed(Uri.parse(url));
+            return blockIfOffsite(Uri.parse(url));
         }
 
         @Override
@@ -102,6 +105,22 @@ public class MainActivity extends Activity {
     private static boolean allowed(Uri uri) {
         String host = uri.getHost();
         return host != null && (host.equals("cinejoy.pk") || host.endsWith(".cinejoy.pk"));
+    }
+
+    private long lastToast;
+
+    /** Returns true (block) for off-site pages, with a short on-screen note. */
+    private boolean blockIfOffsite(Uri uri) {
+        if (allowed(uri)) return false;
+        String scheme = uri.getScheme();
+        if ("http".equals(scheme) || "https".equals(scheme) || "intent".equals(scheme) || "market".equals(scheme)) {
+            long now = System.currentTimeMillis();
+            if (now - lastToast > 3000) {
+                lastToast = now;
+                Toast.makeText(this, "Blocked a pop-up / redirect", Toast.LENGTH_SHORT).show();
+            }
+        }
+        return true;
     }
 
     private void inject() {
@@ -124,6 +143,48 @@ public class MainActivity extends Activity {
         @Override
         public void onHideCustomView() {
             exitFullscreen();
+        }
+
+        /**
+         * Pop-ups / new tabs: open a throwaway view just to learn the URL.
+         * Same-site links load in the main view; everything else is dropped.
+         */
+        @Override
+        public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
+            final WebView probe = new WebView(MainActivity.this);
+            probe.setWebViewClient(new WebViewClient() {
+                private boolean done;
+
+                private boolean handle(Uri uri) {
+                    if (!done) {
+                        done = true;
+                        if (!blockIfOffsite(uri)) web.loadUrl(uri.toString());
+                        probe.post(probe::destroy);
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
+                    return handle(r.getUrl());
+                }
+
+                @SuppressWarnings("deprecation")
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView v, String url) {
+                    return handle(Uri.parse(url));
+                }
+
+                @Override
+                public void onPageStarted(WebView v, String url, android.graphics.Bitmap icon) {
+                    if (url != null && !url.equals("about:blank")) handle(Uri.parse(url));
+                    v.stopLoading();
+                }
+            });
+            WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
+            transport.setWebView(probe);
+            resultMsg.sendToTarget();
+            return true;
         }
     }
 
