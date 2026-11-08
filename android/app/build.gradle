@@ -1,0 +1,41 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.axen2u.cinejoytv'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.axen2u.cinejoytv'
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // Signed with the standard debug key so the APK can be sideloaded as-is.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    // The remote-control script is shared with the Samsung (TizenBrew) module
+    // at the repo root; copy it into the app's assets at build time.
+    sourceSets {
+        main.assets.srcDirs += "$buildDir/generated/navAssets"
+    }
+}
+
+tasks.register('copyNavScript', Copy) {
+    from rootProject.file('../nav.js')
+    into "$buildDir/generated/navAssets"
+}
+preBuild.dependsOn 'copyNavScript'

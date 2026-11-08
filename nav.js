@@ -217,6 +217,7 @@
       if (menu) { focusEl(menu); return; }
     }
     try { window.tizen.application.getCurrentApplication().exit(); } catch (e) {}
+    try { window.CinejoyTV.exit(); } catch (e) {} // Android TV app
   }
 
   // ---- player mode (watch page: a big <video> fills the screen) ----
@@ -301,4 +302,22 @@
       if (!valid(current)) { current = null; focusEl(firstOnScreen(false) || firstOnScreen(true)); }
     }, 500);
   }).observe(document.body || document.documentElement, { childList: true, subtree: true });
+
+  // ---- hooks for the Android TV app (its Back and media keys never reach the page) ----
+  window.__cinejoyTv = {
+    back: function () {
+      var pv = playerVideo();
+      if (pv) playerKey(K.BACK, pv); else back();
+      return 'ok';
+    },
+    key: function (k) {
+      var v = playerVideo() || video();
+      if (v) playerKey(k, v);
+      return 'ok';
+    }
+  };
+  function video() {
+    var v = document.getElementsByTagName('video');
+    return v.length ? v[0] : null;
+  }
 })();
