@@ -1,6 +1,6 @@
 {
   "name": "cinejoy-tv-tizenbrew",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Remote-control navigation for cinejoy.pk on Samsung Tizen TVs (TizenBrew site mod).",
   "packageType": "mods",
   "appName": "Cinejoy",
