@@ -227,9 +227,10 @@
       r = el.getBoundingClientRect();
     }
 
-    // Tall things (hero banner) go near the top; rows sit about a quarter down.
     var vh = window.innerHeight;
-    var target = r.height > vh * 0.5 ? vh * 0.06 : vh * 0.26;
+    // About a quarter down (room for the row's title), but never so low that
+    // the item runs off the bottom; very tall items end up near the top.
+    var target = Math.max(vh * 0.06, Math.min(vh * 0.26, vh * 0.94 - r.height));
     dy = r.top - target;
     var maxY = document.documentElement.scrollHeight - vh;
     var sy = window.pageYOffset;
